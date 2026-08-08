@@ -2,12 +2,12 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 
 import '../../../core/database/db_helper.dart';
 import '../../../core/theme/app_theme.dart';
 import '../models/customer_model.dart';
 import '../services/ocr_service.dart';
-import '../widgets/image_picker_tile.dart';
 
 class CustomerDetailPage extends StatefulWidget {
   final CustomerModel customer;
@@ -23,23 +23,26 @@ class CustomerDetailPage extends StatefulWidget {
 }
 
 class _CustomerDetailPageState
-    extends State<CustomerDetailPage> {
+    extends State<CustomerDetailPage>
+    with SingleTickerProviderStateMixin {
   late CustomerModel customer;
 
-  bool isEditing = false;
-  bool isSaving = false;
-  bool _isScanning = false;
+  late final TextEditingController _nameController;
+  late final TextEditingController _phoneController;
+  late final TextEditingController _addressController;
+  late final TextEditingController _aadharController;
+  late final TextEditingController _pincodeController;
+  late final TextEditingController _vehicleModelController;
+  late final TextEditingController _vehicleNumberController;
+  late final TextEditingController _keyCuttingController;
+
+  String? _vehicleType;
 
   final ImagePicker _picker = ImagePicker();
 
-  late TextEditingController nameController;
-  late TextEditingController phoneController;
-  late TextEditingController addressController;
-  late TextEditingController aadharController;
-  late TextEditingController pincodeController;
-  late TextEditingController vehicleTypeController;
-  late TextEditingController vehicleNumberController;
-  late TextEditingController keyCuttingController;
+  bool _isSaving = false;
+
+  late AnimationController _animationController;
 
   @override
   void initState() {
@@ -47,178 +50,424 @@ class _CustomerDetailPageState
 
     customer = widget.customer;
 
-    nameController =
+    _nameController =
         TextEditingController(text: customer.customerName);
-    phoneController =
+    _phoneController =
         TextEditingController(text: customer.phone);
-    addressController =
-        TextEditingController(text: customer.address);
-    aadharController =
-        TextEditingController(text: customer.aadharNumber);
-    pincodeController =
-        TextEditingController(text: customer.pincode);
-    vehicleTypeController =
-        TextEditingController(text: customer.vehicleType);
-    vehicleNumberController =
-        TextEditingController(text: customer.vehicleNumber);
-    keyCuttingController = TextEditingController(
-      text: customer.keyCuttingNumber,
-    );
+    _addressController =
+        TextEditingController(text: customer.address ?? '');
+    _aadharController =
+        TextEditingController(text: customer.aadharNumber ?? '');
+    _pincodeController =
+        TextEditingController(text: customer.pincode ?? '');
+    _vehicleModelController = TextEditingController(
+        text: customer.vehicleModelName ?? '');
+    _vehicleNumberController = TextEditingController(
+        text: customer.vehicleNumber ?? '');
+    _keyCuttingController = TextEditingController(
+        text: customer.keyCuttingNumber ?? '');
+
+    _vehicleType = customer.vehicleType;
+
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    )..forward();
   }
 
-  Future<File?> _pickImage(ImageSource source) async {
-    final XFile? file = await _picker.pickImage(
-      source: source,
+  bool _isValidImage(String? path) {
+    if (path == null || path.trim().isEmpty) return false;
+
+    try {
+      return File(path).existsSync();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _pickImage(String type) async {
+    final XFile? picked = await _picker.pickImage(
+      source: ImageSource.gallery,
       imageQuality: 80,
     );
 
-    if (file == null) return null;
+    if (picked == null) return;
 
-    return File(file.path);
+    final path = picked.path;
+
+    CustomerModel updated = customer;
+
+    if (type == 'front') {
+      final data =
+      await OCRService.instance.processFront(File(path));
+
+      _nameController.text =
+          data.name ?? _nameController.text;
+
+      _aadharController.text =
+          data.aadhaarNumber ?? _aadharController.text;
+
+      updated = customer.copyWith(
+        aadharFrontPhoto: path,
+        customerName: _nameController.text.trim(),
+        aadharNumber: _aadharController.text.trim(),
+      );
+    } else if (type == 'back') {
+      final data =
+      await OCRService.instance.processBack(File(path));
+
+      _addressController.text =
+          data.address ?? _addressController.text;
+
+      _pincodeController.text =
+          data.pincode ?? _pincodeController.text;
+
+      updated = customer.copyWith(
+        aadharBackPhoto: path,
+        address: _addressController.text.trim(),
+        pincode: _pincodeController.text.trim(),
+      );
+    } else if (type == 'customer') {
+      updated =
+          customer.copyWith(customerPhoto: path);
+    } else if (type == 'rc') {
+      updated = customer.copyWith(rcPhoto: path);
+    }
+
+    await DBHelper.instance.updateCustomer(updated);
+
+    if (!mounted) return;
+
+    setState(() => customer = updated);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Image updated successfully'),
+      ),
+    );
   }
 
-  Future<void> _showImagePicker(
-      Function(File) onSelected,
-      ) async {
-    showModalBottomSheet(
+  Future<void> _removeImage(String type) async {
+    CustomerModel updated = customer;
+
+    switch (type) {
+      case 'customer':
+        updated =
+            customer.copyWith(customerPhoto: '');
+        break;
+      case 'rc':
+        updated = customer.copyWith(rcPhoto: '');
+        break;
+      case 'front':
+        updated = customer.copyWith(
+            aadharFrontPhoto: '');
+        break;
+      case 'back':
+        updated = customer.copyWith(
+            aadharBackPhoto: '');
+        break;
+    }
+
+    await DBHelper.instance.updateCustomer(updated);
+
+    if (!mounted) return;
+
+    setState(() => customer = updated);
+  }
+
+  Future<void> _showFullImage(String path) async {
+    if (!_isValidImage(path)) return;
+
+    await showDialog(
       context: context,
-      backgroundColor: AppTheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius:
-        BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (_) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  leading: const Icon(
-                    Icons.camera_alt,
-                    color: AppTheme.gold,
-                  ),
-                  title: const Text('Camera'),
-                  onTap: () async {
-                    Navigator.pop(context);
-
-                    final file =
-                    await _pickImage(ImageSource.camera);
-
-                    if (file != null) onSelected(file);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(
-                    Icons.photo,
-                    color: AppTheme.gold,
-                  ),
-                  title: const Text('Gallery'),
-                  onTap: () async {
-                    Navigator.pop(context);
-
-                    final file =
-                    await _pickImage(ImageSource.gallery);
-
-                    if (file != null) onSelected(file);
-                  },
-                ),
-              ],
+      barrierColor: Colors.black,
+      builder: (_) => GestureDetector(
+        onTap: () => Navigator.pop(context),
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Center(
+            child: InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 5,
+              child: Image.file(File(path)),
             ),
           ),
-        );
-      },
-    );
-  }
-
-  Future<void> _rescanFront(String path) async {
-    setState(() => _isScanning = true);
-
-    final data =
-    await OCRService.instance.processFront(File(path));
-
-    if (data.name != null &&
-        data.name!.isNotEmpty) {
-      nameController.text = data.name!;
-    }
-
-    if (data.aadhaarNumber != null &&
-        data.aadhaarNumber!.isNotEmpty) {
-      aadharController.text = data.aadhaarNumber!;
-    }
-
-    setState(() => _isScanning = false);
-
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Front OCR updated'),
+        ),
       ),
     );
   }
 
-  Future<void> _rescanBack(String path) async {
-    setState(() => _isScanning = true);
-
-    final data =
-    await OCRService.instance.processBack(File(path));
-
-    if (data.address != null &&
-        data.address!.isNotEmpty) {
-      addressController.text = data.address!;
-    }
-
-    if (data.pincode != null &&
-        data.pincode!.isNotEmpty) {
-      pincodeController.text = data.pincode!;
-    }
-
-    setState(() => _isScanning = false);
-
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Back OCR updated'),
-      ),
-    );
-  }
-
-  Future<void> _saveChanges() async {
-    setState(() => isSaving = true);
+  Future<void> _saveCustomer() async {
+    setState(() => _isSaving = true);
 
     final updated = customer.copyWith(
-      customerName: nameController.text.trim(),
-      phone: phoneController.text.trim(),
-      address: addressController.text.trim(),
-      aadharNumber: aadharController.text.trim(),
-      pincode: pincodeController.text.trim(),
-      vehicleType: vehicleTypeController.text.trim(),
-      vehicleNumber: vehicleNumberController.text.trim(),
+      customerName: _nameController.text.trim(),
+      phone: _phoneController.text.trim(),
+      address: _addressController.text.trim(),
+      aadharNumber: _aadharController.text.trim(),
+      pincode: _pincodeController.text.trim(),
+      vehicleType: _vehicleType,
+      vehicleModelName:
+      _vehicleModelController.text.trim(),
+      vehicleNumber:
+      _vehicleNumberController.text.trim(),
       keyCuttingNumber:
-      keyCuttingController.text.trim(),
-      customerPhoto: customer.customerPhoto,
-      rcPhoto: customer.rcPhoto,
-      aadharFrontPhoto: customer.aadharFrontPhoto,
-      aadharBackPhoto: customer.aadharBackPhoto,
+      _keyCuttingController.text.trim(),
     );
 
     await DBHelper.instance.updateCustomer(updated);
 
-    customer = updated;
+    if (!mounted) return;
 
     setState(() {
-      isEditing = false;
-      isSaving = false;
+      customer = updated;
+      _isSaving = false;
     });
-
-    if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Customer updated successfully'),
+      ),
+    );
+  }
+
+  InputDecoration _decoration(
+      String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon:
+      Icon(icon, color: AppTheme.gold),
+      filled: true,
+      fillColor: AppTheme.surface2,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: BorderSide(
+          color:
+          AppTheme.gold.withValues(alpha: 0.12),
+        ),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: const BorderSide(
+          color: AppTheme.gold,
+          width: 1.3,
+        ),
+      ),
+    );
+  }
+
+  Widget _field(
+      TextEditingController controller,
+      String label,
+      IconData icon, {
+        int maxLines = 1,
+        TextInputType? keyboardType,
+      }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: TextField(
+        controller: controller,
+        keyboardType: keyboardType,
+        maxLines: maxLines,
+        style: const TextStyle(
+          color: AppTheme.textPrimary,
+        ),
+        decoration: _decoration(label, icon),
+      ),
+    );
+  }
+
+  Widget _section({
+    required String title,
+    required IconData icon,
+    required Widget child,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 24),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(
+          color:
+          AppTheme.gold.withValues(alpha: 0.14),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black
+                .withValues(alpha: 0.25),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment:
+        CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppTheme.gold
+                          .withValues(alpha: 0.24),
+                      AppTheme.gold
+                          .withValues(alpha: 0.10),
+                    ],
+                  ),
+                  borderRadius:
+                  BorderRadius.circular(14),
+                ),
+                child: Icon(icon,
+                    color: AppTheme.gold),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: AppTheme.gold,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _imageSection(
+      String title,
+      String? path,
+      String type,
+      ) {
+    final hasImage = _isValidImage(path);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20),
+      decoration: BoxDecoration(
+        color: AppTheme.surface2,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color:
+          AppTheme.gold.withValues(alpha: 0.14),
+        ),
+      ),
+      child: Column(
+        children: [
+          if (hasImage)
+            GestureDetector(
+              onLongPress: () =>
+                  _showFullImage(path),
+              child: ClipRRect(
+                borderRadius:
+                const BorderRadius.vertical(
+                  top: Radius.circular(24),
+                ),
+                child: Image.file(
+                  File(path!),
+                  height: 200,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                ),
+              ),
+            )
+          else
+            Container(
+              height: 180,
+              width: double.infinity,
+              alignment: Alignment.center,
+              child: Column(
+                mainAxisAlignment:
+                MainAxisAlignment.center,
+                children: const [
+                  Icon(
+                    Icons.image_outlined,
+                    size: 44,
+                    color: AppTheme.textSecondary,
+                  ),
+                  SizedBox(height: 10),
+                  Text(
+                    'No image added',
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+
+                TextButton.icon(
+                  onPressed: () =>
+                      _pickImage(type),
+                  icon: Icon(
+                    hasImage
+                        ? Icons.edit_rounded
+                        : Icons.add_a_photo_rounded,
+                    color: AppTheme.gold,
+                  ),
+                  label: Text(
+                    hasImage ? 'Change' : 'Add',
+                    style: const TextStyle(
+                      color: AppTheme.gold,
+                    ),
+                  ),
+                ),
+
+                if (hasImage)
+                  IconButton(
+                    onPressed: () =>
+                        _removeImage(type),
+                    icon: const Icon(
+                      Icons.delete_outline_rounded,
+                      color: Colors.red,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          if (hasImage)
+            const Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                bottom: 12,
+              ),
+              child: Text(
+                'Long press image to view fullscreen',
+                style: TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -228,23 +477,55 @@ class _CustomerDetailPageState
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: AppTheme.surface,
-        title: const Text('Delete Customer'),
-        content: const Text(
-          'This action cannot be undone.',
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(26),
+        ),
+        title: const Row(
+          children: [
+            Icon(
+              Icons.warning_amber_rounded,
+              color: Colors.red,
+            ),
+            SizedBox(width: 10),
+            Text(
+              'Delete Customer',
+              style: TextStyle(
+                color: AppTheme.textPrimary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'Delete ${customer.customerName} permanently?\n\nThis action cannot be undone.',
+          style: const TextStyle(
+            color: AppTheme.textSecondary,
+            height: 1.5,
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () =>
                 Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(
+                color: AppTheme.textSecondary,
+              ),
+            ),
           ),
-          ElevatedButton(
+          ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
+              backgroundColor: Colors.red.shade600,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
             ),
             onPressed: () =>
                 Navigator.pop(context, true),
-            child: const Text('Delete'),
+            icon: const Icon(Icons.delete_rounded),
+            label: const Text('Delete'),
           ),
         ],
       ),
@@ -252,450 +533,444 @@ class _CustomerDetailPageState
 
     if (confirm != true) return;
 
-    await DBHelper.instance.deleteCustomer(customer.id!);
+    if (customer.id != null) {
+      await DBHelper.instance.deleteCustomer(customer.id!);
+    }
 
     if (!mounted) return;
 
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.red.shade700,
+        content: Text(
+          '${customer.customerName} deleted successfully',
+        ),
+      ),
+    );
+
     Navigator.pop(context, true);
-  }
-
-  void _openImage(String path) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => _FullScreenImagePage(path: path),
-      ),
-    );
-  }
-
-  Widget _infoField({
-    required String label,
-    required TextEditingController controller,
-    int maxLines = 1,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: TextField(
-        controller: controller,
-        enabled: isEditing,
-        maxLines: maxLines,
-        style: const TextStyle(
-          color: AppTheme.textPrimary,
-        ),
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: isEditing
-              ? AppTheme.surface2
-              : AppTheme.surface,
-          disabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-            borderSide: BorderSide(
-              color: AppTheme.gold.withValues(alpha: 0.12),
-            ),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-            borderSide: BorderSide(
-              color: AppTheme.gold.withValues(alpha: 0.22),
-            ),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-            borderSide: const BorderSide(
-              color: AppTheme.gold,
-              width: 1.4,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _replaceButton({
-    required String label,
-    required Function(File) onSelected,
-  }) {
-    if (!isEditing) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 20),
-      child: OutlinedButton.icon(
-        icon: const Icon(Icons.edit),
-        label: Text(label),
-        onPressed: () => _showImagePicker(onSelected),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Customer Details'),
-        actions: [
-          IconButton(
-            icon: Icon(
-              isEditing ? Icons.close : Icons.edit_outlined,
+      body: CustomScrollView(
+        physics:
+        const BouncingScrollPhysics(),
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 300,
+            pinned: true,
+            backgroundColor:
+            AppTheme.background,
+            leading: Padding(
+              padding: const EdgeInsets.only(left: 12.0),
+              child: IconButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                  },
+                  icon: Icon(Icons.arrow_back_ios_new_rounded),
+              ),
             ),
-            onPressed: () {
-              setState(() {
-                isEditing = !isEditing;
-              });
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            onPressed: _deleteCustomer,
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 120),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (_isScanning)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 12),
-                child: LinearProgressIndicator(
-                  color: AppTheme.gold,
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 8.0),
+                child: Container(
+                  margin: const EdgeInsets.symmetric(
+                      vertical: 8),
+                  decoration: BoxDecoration(
+                    color:
+                    Colors.red.withValues(alpha: 0.12),
+                    borderRadius:
+                    BorderRadius.circular(16),
+                    border: Border.all(
+                      color:
+                      Colors.red.withValues(alpha: 0.25),
+                    ),
+                  ),
+                  child: IconButton(
+                    tooltip: 'Delete Customer',
+                    onPressed: _deleteCustomer,
+                    icon: const Icon(
+                      Icons.delete_outline_rounded,
+                      color: Colors.redAccent,
+                    ),
+                  ),
                 ),
               ),
+            ],
+            flexibleSpace: FlexibleSpaceBar(
+              background: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      AppTheme.gold
+                          .withValues(alpha: 0.18),
+                      AppTheme.background,
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: SafeArea(
+                  child: Column(
+                    mainAxisAlignment:
+                    MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 112,
+                        height: 112,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: AppTheme.gold
+                                .withValues(
+                                alpha: 0.45),
+                            width: 2,
+                          ),
+                          image: _isValidImage(
+                              customer
+                                  .customerPhoto)
+                              ? DecorationImage(
+                            image: FileImage(File(
+                                customer
+                                    .customerPhoto!)),
+                            fit: BoxFit.cover,
+                          )
+                              : null,
+                          gradient: !_isValidImage(
+                              customer
+                                  .customerPhoto)
+                              ? LinearGradient(
+                            colors: [
+                              AppTheme.gold
+                                  .withValues(
+                                  alpha:
+                                  0.22),
+                              AppTheme.surface2,
+                            ],
+                          )
+                              : null,
+                        ),
+                        child: !_isValidImage(
+                            customer
+                                .customerPhoto)
+                            ? Center(
+                          child: Text(
+                            customer.initials,
+                            style:
+                            const TextStyle(
+                              color:
+                              AppTheme.gold,
+                              fontSize: 34,
+                              fontWeight:
+                              FontWeight
+                                  .w800,
+                            ),
+                          ),
+                        )
+                            : null,
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        customer.customerName,
+                        style: const TextStyle(
+                          color:
+                          AppTheme.textPrimary,
+                          fontSize: 26,
+                          fontWeight:
+                          FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        customer.phone,
+                        style: const TextStyle(
+                          color:
+                          AppTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
 
-            // Header
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    AppTheme.gold.withValues(alpha: 0.16),
-                    AppTheme.surface,
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(
+                18, 20, 18, 120),
+            sliver: SliverToBoxAdapter(
+              child: FadeTransition(
+                opacity: CurvedAnimation(
+                  parent: _animationController,
+                  curve: Curves.easeOut,
                 ),
-                borderRadius: BorderRadius.circular(28),
-                border: Border.all(
-                  color: AppTheme.gold.withValues(alpha: 0.22),
-                ),
-              ),
-              child: Column(
-                children: [
-                  CircleAvatar(
-                    radius: 42,
-                    backgroundColor:
-                    AppTheme.gold.withValues(alpha: 0.18),
-                    child: Text(
-                      customer.initials,
-                      style: const TextStyle(
-                        color: AppTheme.gold,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 24,
+                child: Column(
+                  children: [
+                    _section(
+                      title:
+                      'Customer Information',
+                      icon: Icons
+                          .person_outline_rounded,
+                      child: Column(
+                        children: [
+                          _field(
+                            _nameController,
+                            'Customer Name',
+                            Icons.person_rounded,
+                          ),
+                          _field(
+                            _phoneController,
+                            'Phone Number',
+                            Icons.phone_rounded,
+                            keyboardType:
+                            TextInputType.phone,
+                          ),
+                          _field(
+                            _aadharController,
+                            'Aadhaar Number',
+                            Icons.badge_rounded,
+                            keyboardType:
+                            TextInputType.number,
+                          ),
+                          _field(
+                            _pincodeController,
+                            'Pincode',
+                            Icons
+                                .location_on_outlined,
+                            keyboardType:
+                            TextInputType.number,
+                          ),
+                          _field(
+                            _addressController,
+                            'Address',
+                            Icons.home_outlined,
+                            maxLines: 3,
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    customer.customerName,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: AppTheme.textPrimary,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
+
+                    _section(
+                      title:
+                      'Vehicle Information',
+                      icon: Icons
+                          .directions_car_outlined,
+                      child: Column(
+                        children: [
+                          DropdownButtonFormField<
+                              String>(
+                            initialValue: _vehicleType,
+                            dropdownColor:
+                            AppTheme.surface,
+                            decoration:
+                            _decoration(
+                              'Vehicle Type',
+                              Icons
+                                  .category_outlined,
+                            ),
+                            items: const [
+                              'Bike',
+                              'Scooter',
+                              'Car',
+                              'Auto',
+                              'Van',
+                              'Truck',
+                              'Bus',
+                              'Other',
+                            ]
+                                .map(
+                                  (e) =>
+                                  DropdownMenuItem(
+                                    value: e,
+                                    child: Text(e),
+                                  ),
+                            )
+                                .toList(),
+                            onChanged: (v) {
+                              setState(() =>
+                              _vehicleType = v);
+                            },
+                          ),
+
+                          const SizedBox(height: 16),
+
+                          _field(
+                            _vehicleModelController,
+                            'Vehicle Model Name',
+                            Icons
+                                .model_training_rounded,
+                          ),
+
+                          _field(
+                            _vehicleNumberController,
+                            'Vehicle Number',
+                            Icons
+                                .confirmation_number_outlined,
+                          ),
+
+                          _field(
+                            _keyCuttingController,
+                            'Key Cutting Number',
+                            Icons.key_rounded,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    customer.phone,
-                    style: const TextStyle(
-                      color: AppTheme.textSecondary,
+
+                    _section(
+                      title:
+                      'Documents & Photos',
+                      icon: Icons
+                          .photo_library_outlined,
+                      child: Column(
+                        children: [
+                          _imageSection(
+                            'Customer Photo',
+                            customer.customerPhoto,
+                            'customer',
+                          ),
+                          _imageSection(
+                            'Vehicle RC Photo',
+                            customer.rcPhoto,
+                            'rc',
+                          ),
+                          _imageSection(
+                            'Aadhaar Front',
+                            customer.aadharFrontPhoto,
+                            'front',
+                          ),
+                          _imageSection(
+                            'Aadhaar Back',
+                            customer.aadharBackPhoto,
+                            'back',
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ),
 
-            const SizedBox(height: 26),
-
-            const Text(
-              'Personal Information',
-              style: TextStyle(
-                color: AppTheme.gold,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 14),
-
-            _infoField(
-              label: 'Customer Name',
-              controller: nameController,
-            ),
-            _infoField(
-              label: 'Phone Number',
-              controller: phoneController,
-            ),
-            _infoField(
-              label: 'Aadhaar Number',
-              controller: aadharController,
-            ),
-            _infoField(
-              label: 'Pincode',
-              controller: pincodeController,
-            ),
-            _infoField(
-              label: 'Address',
-              controller: addressController,
-              maxLines: 3,
-            ),
-
-            const SizedBox(height: 24),
-
-            const Text(
-              'Vehicle Information',
-              style: TextStyle(
-                color: AppTheme.gold,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 14),
-
-            _infoField(
-              label: 'Vehicle Type',
-              controller: vehicleTypeController,
-            ),
-            _infoField(
-              label: 'Vehicle Number',
-              controller: vehicleNumberController,
-            ),
-            _infoField(
-              label: 'Key Cutting Number',
-              controller: keyCuttingController,
-            ),
-
-            const SizedBox(height: 24),
-
-            const Text(
-              'Documents & Photos',
-              style: TextStyle(
-                color: AppTheme.gold,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 14),
-
-            // Customer Photo
-            ImagePickerTile(
-              title: 'Customer Photo',
-              file: customer.customerPhoto != null
-                  ? File(customer.customerPhoto!)
-                  : null,
-              onTap: () {
-                if (customer.customerPhoto != null) {
-                  _openImage(customer.customerPhoto!);
-                }
-              },
-            ),
-            _replaceButton(
-              label: 'Replace Customer Photo',
-              onSelected: (file) {
-                setState(() {
-                  customer = customer.copyWith(
-                    customerPhoto: file.path,
-                  );
-                });
-              },
-            ),
-
-            // RC Photo
-            ImagePickerTile(
-              title: 'Vehicle RC',
-              file: customer.rcPhoto != null
-                  ? File(customer.rcPhoto!)
-                  : null,
-              onTap: () {
-                if (customer.rcPhoto != null) {
-                  _openImage(customer.rcPhoto!);
-                }
-              },
-            ),
-            _replaceButton(
-              label: 'Replace RC Photo',
-              onSelected: (file) {
-                setState(() {
-                  customer = customer.copyWith(
-                    rcPhoto: file.path,
-                  );
-                });
-              },
-            ),
-
-            // Aadhaar Front
-            ImagePickerTile(
-              title: 'Aadhaar Front',
-              file: customer.aadharFrontPhoto != null
-                  ? File(customer.aadharFrontPhoto!)
-                  : null,
-              onTap: () {
-                if (customer.aadharFrontPhoto != null) {
-                  _openImage(customer.aadharFrontPhoto!);
-                }
-              },
-              onOcr: customer.aadharFrontPhoto == null
-                  ? null
-                  : () => _rescanFront(
-                customer.aadharFrontPhoto!,
-              ),
-            ),
-            _replaceButton(
-              label: 'Replace Front Image',
-              onSelected: (file) async {
-                setState(() {
-                  customer = customer.copyWith(
-                    aadharFrontPhoto: file.path,
-                  );
-                });
-
-                await _rescanFront(file.path);
-              },
-            ),
-
-            // Aadhaar Back
-            ImagePickerTile(
-              title: 'Aadhaar Back',
-              file: customer.aadharBackPhoto != null
-                  ? File(customer.aadharBackPhoto!)
-                  : null,
-              onTap: () {
-                if (customer.aadharBackPhoto != null) {
-                  _openImage(customer.aadharBackPhoto!);
-                }
-              },
-              onOcr: customer.aadharBackPhoto == null
-                  ? null
-                  : () => _rescanBack(
-                customer.aadharBackPhoto!,
-              ),
-            ),
-            _replaceButton(
-              label: 'Replace Back Image',
-              onSelected: (file) async {
-                setState(() {
-                  customer = customer.copyWith(
-                    aadharBackPhoto: file.path,
-                  );
-                });
-
-                await _rescanBack(file.path);
-              },
-            ),
-
-            const SizedBox(height: 32),
-
-            if (isEditing)
-              Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  gradient: AppTheme.goldGradient,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: ElevatedButton(
-                  onPressed:
-                  isSaving ? null : _saveChanges,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.transparent,
-                    foregroundColor: Colors.black,
-                    shadowColor: Colors.transparent,
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 16,
+                    _section(
+                      title:
+                      'Record Information',
+                      icon:
+                      Icons.event_note_rounded,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(
+                          Icons.calendar_today_rounded,
+                          color: AppTheme.gold,
+                        ),
+                        title: const Text(
+                          'Created On',
+                          style: TextStyle(
+                            color:
+                            AppTheme.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+                        subtitle: Text(
+                          DateFormat(
+                            'dd MMM yyyy • hh:mm a',
+                          ).format(customer.createdAt),
+                          style: const TextStyle(
+                            color:
+                            AppTheme.textPrimary,
+                            fontWeight:
+                            FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                  child: isSaving
-                      ? const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.2,
-                      color: Colors.black,
+
+                    const SizedBox(height: 10),
+
+                    Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        gradient:
+                        AppTheme.goldGradient,
+                        borderRadius:
+                        BorderRadius.circular(24),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTheme.gold
+                                .withValues(alpha: 0.35),
+                            blurRadius: 26,
+                            offset:
+                            const Offset(0, 12),
+                          ),
+                        ],
+                      ),
+                      child: ElevatedButton.icon(
+                        onPressed: _isSaving
+                            ? null
+                            : _saveCustomer,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor:
+                          Colors.transparent,
+                          shadowColor:
+                          Colors.transparent,
+                          foregroundColor:
+                          Colors.black,
+                          padding:
+                          const EdgeInsets.symmetric(
+                            vertical: 18,
+                          ),
+                          shape:
+                          RoundedRectangleBorder(
+                            borderRadius:
+                            BorderRadius.circular(
+                                24),
+                          ),
+                        ),
+                        icon: _isSaving
+                            ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child:
+                          CircularProgressIndicator(
+                            strokeWidth: 2.2,
+                            color: Colors.black,
+                          ),
+                        )
+                            : const Icon(
+                            Icons.save_rounded),
+                        label: Text(
+                          _isSaving
+                              ? 'Saving...'
+                              : 'Save Changes',
+                          style: const TextStyle(
+                            fontWeight:
+                            FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
                     ),
-                  )
-                      : const Text(
-                    'Save Changes',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 16,
-                    ),
-                  ),
+                  ],
                 ),
               ),
-          ],
-        ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
   @override
   void dispose() {
-    nameController.dispose();
-    phoneController.dispose();
-    addressController.dispose();
-    aadharController.dispose();
-    pincodeController.dispose();
-    vehicleTypeController.dispose();
-    vehicleNumberController.dispose();
-    keyCuttingController.dispose();
+    _animationController.dispose();
+
+    _nameController.dispose();
+    _phoneController.dispose();
+    _addressController.dispose();
+    _aadharController.dispose();
+    _pincodeController.dispose();
+    _vehicleModelController.dispose();
+    _vehicleNumberController.dispose();
+    _keyCuttingController.dispose();
+
     super.dispose();
-  }
-}
-
-class _FullScreenImagePage extends StatelessWidget {
-  final String path;
-
-  const _FullScreenImagePage({
-    required this.path,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: GestureDetector(
-        onTap: () => Navigator.pop(context),
-        child: Stack(
-          children: [
-            Center(
-              child: Hero(
-                tag: path,
-                child: InteractiveViewer(
-                  minScale: 0.8,
-                  maxScale: 4,
-                  child: Image.file(
-                    File(path),
-                    fit: BoxFit.contain,
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              top: MediaQuery.of(context).padding.top + 8,
-              right: 12,
-              child: IconButton(
-                icon: const Icon(
-                  Icons.close,
-                  color: Colors.white,
-                  size: 28,
-                ),
-                onPressed: () =>
-                    Navigator.pop(context),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }

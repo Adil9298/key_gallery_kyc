@@ -14,6 +14,8 @@ class AppTheme {
   static const Color textPrimary = Color(0xFFF5F5F5);
   static const Color textSecondary = Color(0xFFBDBDBD);
 
+  static const Color redAccent = Color(0xFFD32F2F);
+
   static ThemeData darkGoldTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,

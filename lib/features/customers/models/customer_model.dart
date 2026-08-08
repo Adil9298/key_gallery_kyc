@@ -9,9 +9,13 @@ class CustomerModel {
   final String? pincode;
 
   final String? vehicleType;
+
+  // NEW FIELD
+  final String? vehicleModelName;
+
   final String? vehicleNumber;
 
-  // NEW OPTIONAL FIELD
+  // OPTIONAL FIELD
   final String? keyCuttingNumber;
 
   final String? customerPhoto;
@@ -30,6 +34,7 @@ class CustomerModel {
     this.aadharNumber,
     this.pincode,
     this.vehicleType,
+    this.vehicleModelName,
     this.vehicleNumber,
     this.keyCuttingNumber,
     this.customerPhoto,
@@ -40,7 +45,8 @@ class CustomerModel {
   });
 
   // Create model from SQLite map
-  factory CustomerModel.fromMap(Map<String, dynamic> map) {
+  factory CustomerModel.fromMap(
+      Map<String, dynamic> map) {
     return CustomerModel(
       id: map['id'] as int?,
       customerName: map['customer_name'] ?? '',
@@ -49,6 +55,10 @@ class CustomerModel {
       aadharNumber: map['aadhar_number'],
       pincode: map['pincode'],
       vehicleType: map['vehicle_type'],
+
+      // NEW FIELD
+      vehicleModelName: map['vehicle_model_name'],
+
       vehicleNumber: map['vehicle_number'],
       keyCuttingNumber: map['key_cutting_number'],
       customerPhoto: map['customer_photo'],
@@ -56,7 +66,8 @@ class CustomerModel {
       aadharFrontPhoto: map['aadhar_front_photo'],
       aadharBackPhoto: map['aadhar_back_photo'],
       createdAt:
-      DateTime.tryParse(map['created_at'] ?? '') ?? DateTime.now(),
+      DateTime.tryParse(map['created_at'] ?? '') ??
+          DateTime.now(),
     );
   }
 
@@ -70,6 +81,10 @@ class CustomerModel {
       'aadhar_number': aadharNumber,
       'pincode': pincode,
       'vehicle_type': vehicleType,
+
+      // NEW FIELD
+      'vehicle_model_name': vehicleModelName,
+
       'vehicle_number': vehicleNumber,
       'key_cutting_number': keyCuttingNumber,
       'customer_photo': customerPhoto,
@@ -89,6 +104,10 @@ class CustomerModel {
     String? aadharNumber,
     String? pincode,
     String? vehicleType,
+
+    // NEW FIELD
+    String? vehicleModelName,
+
     String? vehicleNumber,
     String? keyCuttingNumber,
     String? customerPhoto,
@@ -99,16 +118,25 @@ class CustomerModel {
   }) {
     return CustomerModel(
       id: id ?? this.id,
-      customerName: customerName ?? this.customerName,
+      customerName:
+      customerName ?? this.customerName,
       phone: phone ?? this.phone,
       address: address ?? this.address,
-      aadharNumber: aadharNumber ?? this.aadharNumber,
+      aadharNumber:
+      aadharNumber ?? this.aadharNumber,
       pincode: pincode ?? this.pincode,
       vehicleType: vehicleType ?? this.vehicleType,
-      vehicleNumber: vehicleNumber ?? this.vehicleNumber,
+
+      // NEW FIELD
+      vehicleModelName:
+      vehicleModelName ?? this.vehicleModelName,
+
+      vehicleNumber:
+      vehicleNumber ?? this.vehicleNumber,
       keyCuttingNumber:
       keyCuttingNumber ?? this.keyCuttingNumber,
-      customerPhoto: customerPhoto ?? this.customerPhoto,
+      customerPhoto:
+      customerPhoto ?? this.customerPhoto,
       rcPhoto: rcPhoto ?? this.rcPhoto,
       aadharFrontPhoto:
       aadharFrontPhoto ?? this.aadharFrontPhoto,
@@ -118,15 +146,15 @@ class CustomerModel {
     );
   }
 
-  // Helper getters
-
   /// Mask Aadhaar for list display
   String get maskedAadhar {
-    if (aadharNumber == null || aadharNumber!.isEmpty) {
+    if (aadharNumber == null ||
+        aadharNumber!.isEmpty) {
       return '';
     }
 
-    final cleaned = aadharNumber!.replaceAll(' ', '');
+    final cleaned =
+    aadharNumber!.replaceAll(' ', '');
 
     if (cleaned.length < 4) return aadharNumber!;
 
@@ -135,12 +163,15 @@ class CustomerModel {
 
   /// Initials for avatar
   String get initials {
-    final parts = customerName.trim().split(' ');
+    final parts =
+    customerName.trim().split(' ');
 
     if (parts.isEmpty) return '';
 
     if (parts.length == 1) {
-      return parts.first.substring(0, 1).toUpperCase();
+      return parts.first
+          .substring(0, 1)
+          .toUpperCase();
     }
 
     return (parts.first.substring(0, 1) +
@@ -148,9 +179,9 @@ class CustomerModel {
         .toUpperCase();
   }
 
-  /// Whether customer photo exists
   bool get hasCustomerPhoto =>
-      customerPhoto != null && customerPhoto!.isNotEmpty;
+      customerPhoto != null &&
+          customerPhoto!.isNotEmpty;
 
   bool get hasRcPhoto =>
       rcPhoto != null && rcPhoto!.isNotEmpty;
@@ -167,9 +198,14 @@ class CustomerModel {
       keyCuttingNumber != null &&
           keyCuttingNumber!.isNotEmpty;
 
+  // NEW HELPER
+  bool get hasVehicleModelName =>
+      vehicleModelName != null &&
+          vehicleModelName!.isNotEmpty;
+
   @override
   String toString() {
-    return 'CustomerModel(id: $id, name: $customerName, phone: $phone, keyCuttingNumber: $keyCuttingNumber)';
+    return 'CustomerModel(id: $id, name: $customerName, phone: $phone, vehicleModelName: $vehicleModelName, keyCuttingNumber: $keyCuttingNumber)';
   }
 
   @override
